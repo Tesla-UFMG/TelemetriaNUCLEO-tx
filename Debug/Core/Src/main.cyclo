@@ -1,0 +1,11 @@
+../Drivers/STM32WLxx_HAL_Driver/Inc/stm32wlxx_ll_bus.h:449:22:LL_AHB2_GRP1_EnableClock	1
+../Core/Src/main.c:105:5:main	7
+../Core/Src/main.c:241:6:SystemClock_Config	3
+../Core/Src/main.c:281:5:__io_putchar	1
+../Core/Src/main.c:286:5:_write	1
+../Core/Src/main.c:291:6:_i2c1_receivemsg	4
+../Core/Src/main.c:336:6:radioInit	1
+../Core/Src/main.c:376:6:RadioOnDioIrq	3
+../Core/Src/main.c:382:6:HAL_SPI_RxCpltCallback	3
+../Core/Src/main.c:408:6:HAL_SPI_ErrorCallback	2
+../Core/Src/main.c:428:6:Error_Handler	1
