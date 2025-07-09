@@ -71,9 +71,7 @@ volatile bool txDone, txTimeout;
 uint8_t txBuf[8] = {0x01,0x23,0x45,0x67, 0x89,0xAB,0xCD,0xEF};
 uint8_t rxData[8];
 const char *status;
-
 uint8_t rxByte[8];
-
 HAL_StatusTypeDef rxStatus;
 
 /* USER CODE END PV */
@@ -84,11 +82,9 @@ void SystemClock_Config(void);
 
 void RadioOnDioIrq(RadioIrqMasks_t radioIrq);
 void radioInit(void);
-
 int __io_putchar(int ch);
 int _write(int file, char *ptr, int len);
-void _i2c1_receivemsg(uint8_t* buf, uint8_t size);
-void dispBanner();
+void _i2c1_receive(uint8_t* buf, uint8_t size);
 
 /* USER CODE END PFP */
 
@@ -105,8 +101,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
-  char uartBuff[100];
 
   /* USER CODE END 1 */
 
@@ -171,6 +165,9 @@ int main(void)
 
   radioInit();
 
+  printf("\n\n\n\rTELEMETRIA MASTER - FORMULA TESLA UFMG\r\nVERSAO=1.0\r\n---------------\r\n");
+  printf("LORA_MODULATION\r\nLORA_BW=%d Hz\r\nLORA_SF=%d\r\nTX_OUTPUT_POWER= %d dBm", (1 << LORA_BANDWIDTH) * 125, LORA_SPREADING_FACTOR, TX_OUTPUT_POWER);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -186,15 +183,16 @@ int main(void)
 
   while (1)
   {
-	// Faz a leitura de dados por i2c
-	_i2c1_receivemsg(txBuf, 8);
+	/* Recebe pacote de dados da Datalogger via I2C1 */
+	_i2c1_receive(txBuf, 8);
 
+	/* Envia os dados lidos via LoRa para a placa receptora */
 	txDone = txTimeout = false;
 	SUBGRF_SetSwitch(RFO_LP, RFSWITCH_TX);
 	SUBGRF_SendPayload(txBuf, sizeof(txBuf), 0);
-
 	while (!txDone && !txTimeout);
 
+	/* Verifica flags e define status da transmissao LoRa */
 	if (txTimeout) {
 		status = "TIMEOUT";
 	} else if (txDone) {
@@ -202,24 +200,23 @@ int main(void)
 	} else {
 		status = "DESCONHECIDO";
 	}
-	int len = 0;
+	printf("\r\n\r\nStatus: %s", status);
 
-	len += sprintf(uartBuff + len,
-	 "\r\n\r\n"
-	 "Status: %s\r\n"
-	 "Payload (%d bytes): ",
-	 status, (int)sizeof(txBuf));
-
-	for (int i = 0; i < sizeof(txBuf); i++) {
-	 len += sprintf(uartBuff + len, "%02X ", txBuf[i]);
-	}
-
-	HAL_UART_Transmit(&huart2, (uint8_t*)uartBuff, len, HAL_MAX_DELAY);
-
+	/* Se o processo foi concluido com sucesso, imprime os dados recebidos
+	 * e pisca o LED verde; Senao, pisca o LED vermelho */
 	if (txDone) {
-	 BSP_LED_Toggle(LED_GREEN);
+	  printf("\r\nPayload (%d bytes): ", (int)sizeof(txBuf));
+	  for (int i = 0; i < sizeof(txBuf); i++) {
+	    printf("%02X ", txBuf[i]);
+	  }
+	  BSP_LED_Off(LED_RED);
+	  BSP_LED_Toggle(LED_GREEN);
+	} else {
+	  BSP_LED_Off(LED_RED);
+	  BSP_LED_Toggle(LED_GREEN);
 	}
 
+	/* Pausa */
 	HAL_Delay(POLL_DELAY_MS);
 
     /* USER CODE END WHILE */
@@ -273,62 +270,40 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+/* @brief Redireciona um caracter para escrita no monitor serial, via UART2
+ * @param ch Caracter
+ * @retval Caracter escrito
+ */
 int __io_putchar(int ch) {
     HAL_UART_Transmit(&huart2, (uint8_t*)&ch, 1, HAL_MAX_DELAY);
     return ch;
 }
 
+/* @brief Redireciona um ponteiro oara vetor de caracteres
+ * @param file Stream de destino
+ * @param ptr Ponteiro para o vetor de caracteres
+ * @param len Comprimento do vetor de caracteres
+ * @retval Tamanho do vetor de caracteres redirecionado
+ */
 int _write(int file, char *ptr, int len) {
     HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
     return len;
 }
 
-void _i2c1_receivemsg(uint8_t* buf, uint8_t size){
-	/* Aguarda até 1 s por 1 byte vindo do mestre */
-	  HAL_StatusTypeDef status = HAL_I2C_Slave_Receive(
-			 &hi2c1,
-			 buf,
-			 size,
-			 RX_TIMEOUT_MS
-		   );
-
-	if (status == HAL_OK)
-	{
-		/* Byte corretamente recebido */
-		//printf("\r\nRecebido: ");
-		//for(uint8_t i = 0; i < size; i++){
-		//	printf("%d ", buf[i]);
-		//}
-		//BSP_LED_On(LED_GREEN);
-		//HAL_Delay(300);
-		//BSP_LED_Off(LED_GREEN);
-	}
-	else if (status == HAL_TIMEOUT)
-	{
-		/* Sem dado dentro do timeout – apenas aguarda e repete */
-		// opcional: nada ou debug mínimo
-	}
-	else
-	{
-		/* Outro erro I2C */
-		//printf("Erro na recepcao I2C (status = %d; endereco = %li)\r\n", status, hi2c1.Init.OwnAddress1);
-		//BSP_LED_On(LED_RED);
-		//HAL_Delay(300);
-		//BSP_LED_Off(LED_RED);
-		if (__HAL_I2C_GET_FLAG(&hi2c1, I2C_FLAG_AF))     /* NACK */
-			__HAL_I2C_CLEAR_FLAG(&hi2c1, I2C_FLAG_AF);   /* limpa */
-
-		/* reabilita o periférico se precisar */
-		__HAL_I2C_DISABLE(&hi2c1);
-		__HAL_I2C_ENABLE(&hi2c1);
-	}
-}
-
-void dispBanner(){
-	strcpy(uartBuff, "\n\n\n\rTELEMETRIA MASTER - FORMULA TESLA UFMG\r\nVERSAO=1.0\r\n---------------\r\n");
-	HAL_UART_Transmit(&huart2, (uint8_t *)uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
-	sprintf(uartBuff, "LORA_MODULATION\r\nLORA_BW=%d Hz\r\nLORA_SF=%d\r\nTX_OUTPUT_POWER= %d dBm", (1 << LORA_BANDWIDTH) * 125, LORA_SPREADING_FACTOR, TX_OUTPUT_POWER);
-	HAL_UART_Transmit(&huart2, (uint8_t *)uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
+/* @brief Recebe e armazena dados atraves do I2C1
+ * @param buf Buffer onde os dados sao armazenados
+ * @param size Tamanho do buffer
+ * @retval Nenhum
+ */
+void _i2c1_receive(uint8_t* buf, uint8_t size){
+  HAL_StatusTypeDef status = HAL_I2C_Slave_Receive(&hi2c1, buf, size, RX_TIMEOUT_MS);
+  if (status != HAL_OK)
+  {
+    if (__HAL_I2C_GET_FLAG(&hi2c1, I2C_FLAG_AF))
+	  __HAL_I2C_CLEAR_FLAG(&hi2c1, I2C_FLAG_AF);
+	__HAL_I2C_DISABLE(&hi2c1);
+	__HAL_I2C_ENABLE(&hi2c1);
+  }
 }
 
 /**
