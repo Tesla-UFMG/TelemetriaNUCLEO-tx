@@ -29,8 +29,17 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 #include "stm32wlxx_hal.h"
 
+#include "stm32wlxx_nucleo.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include "radio_driver.h"
+#include "stm32wlxx_nucleo.h"
 
 /* USER CODE END Includes */
 
@@ -47,12 +56,34 @@ extern "C" {
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 
+// LoRa
+#define RF_FREQUENCY                                868000000 /* Hz */
+#define TX_OUTPUT_POWER                             14        /* dBm */
+#define LORA_BANDWIDTH                              0         /* Hz */
+#define LORA_SPREADING_FACTOR                       7
+#define LORA_CODINGRATE                             1
+#define LORA_PREAMBLE_LENGTH                        8         /* Same for Tx and Rx */
+#define LORA_SYMBOL_TIMEOUT                         5         /* Symbols */
+
+// I2C
+#define I2C_SLAVE_ADDR   (0x3C << 1)   // 7-bit 0x3C -> 8-bit 0x78
+
+// Tamanho do Pacote
+#define STD_BUFFER_SIZE 9
+
+// Delay do Loop Principal
+#define SLEEP_TIME 20
+
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+
+extern int __io_putchar(int ch);
+extern int _write(int file, char *ptr, int len);
+extern uint8_t i2c_buff[STD_BUFFER_SIZE];
 
 /* USER CODE END EFP */
 

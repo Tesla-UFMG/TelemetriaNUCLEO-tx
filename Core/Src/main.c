@@ -19,18 +19,12 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "i2c.h"
-#include "spi.h"
 #include "subghz.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
-#include <string.h>
-#include <stdio.h>
-#include "radio_driver.h"
-#include "stm32wlxx_nucleo.h"
 
 /* USER CODE END Includes */
 
@@ -47,32 +41,15 @@
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
-// LoRa
-#define RF_FREQUENCY                                868000000 /* Hz */
-#define TX_OUTPUT_POWER                             14        /* dBm */
-#define LORA_BANDWIDTH                              0         /* Hz */
-#define LORA_SPREADING_FACTOR                       7
-#define LORA_CODINGRATE                             1
-#define LORA_PREAMBLE_LENGTH                        8         /* Same for Tx and Rx */
-#define LORA_SYMBOL_TIMEOUT                         5         /* Symbols */
-// i2c
-#define I2C_SLAVE_ADDR   (0x3C << 1)   // 7-bit 0x3C -> 8-bit 0x78
-#define RX_TIMEOUT_MS    1000          // Timeout de recepção
-#define POLL_DELAY_MS    100           // Delay entre tentativas
-
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
 
-volatile bool txDone, txTimeout;
-uint8_t txBuf[8] = {0x01,0x23,0x45,0x67, 0x89,0xAB,0xCD,0xEF};
-uint8_t rxData[8];
-const char *status;
-uint8_t rxByte[8];
-HAL_StatusTypeDef rxStatus;
+volatile bool tx_done, tx_timeout, rx_done, rx_error, rx_timeout;
+uint8_t lora_buff[STD_BUFFER_SIZE];
+bool i2c_enabled, enable_lora_tx, enable_lora_rx, rng_mode;
 
 /* USER CODE END PV */
 
@@ -80,11 +57,10 @@ HAL_StatusTypeDef rxStatus;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-void RadioOnDioIrq(RadioIrqMasks_t radioIrq);
-void radioInit(void);
 int __io_putchar(int ch);
 int _write(int file, char *ptr, int len);
-void _i2c1_receive(uint8_t* buf, uint8_t size);
+void RadioOnDioIrq(RadioIrqMasks_t radioIrq);
+void radioInit(void);
 
 /* USER CODE END PFP */
 
@@ -154,70 +130,108 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_I2C1_Init();
   MX_SUBGHZ_Init();
   MX_USART2_UART_Init();
-  MX_SPI1_Init();
-  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-
-  BSP_LED_Init(LED_GREEN);
-  BSP_LED_Init(LED_RED);
 
   radioInit();
 
-  printf("\n\n\n\rTELEMETRIA MASTER - FORMULA TESLA UFMG\r\nVERSAO=1.0\r\n---------------\r\n");
-  printf("LORA_MODULATION\r\nLORA_BW=%d Hz\r\nLORA_SF=%d\r\nTX_OUTPUT_POWER= %d dBm", (1 << LORA_BANDWIDTH) * 125, LORA_SPREADING_FACTOR, TX_OUTPUT_POWER);
-
   /* USER CODE END 2 */
+
+  /* Initialize leds */
+  BSP_LED_Init(LED_BLUE);
+  BSP_LED_Init(LED_GREEN);
+  BSP_LED_Init(LED_RED);
+
+  /* Initialize USER push-button, will be used to trigger an interrupt each time it's pressed.*/
+  BSP_PB_Init(BUTTON_SW1, BUTTON_MODE_EXTI);
+  BSP_PB_Init(BUTTON_SW2, BUTTON_MODE_EXTI);
+  BSP_PB_Init(BUTTON_SW3, BUTTON_MODE_EXTI);
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  SUBGRF_SetDioIrqParams(IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
-                         IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+  SUBGRF_SetDioIrqParams(IRQ_TX_DONE | IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
+                         IRQ_TX_DONE | IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
                          IRQ_RADIO_NONE,
                          IRQ_RADIO_NONE);
 
-  // Inicia recepção IT
-  HAL_SPI_Receive_IT(&hspi1, rxData, 8);
+  i2c_enabled = true;
+  enable_lora_tx = true;
+  enable_lora_rx = false;
+  rng_mode = false;
+
+  if(i2c_enabled) {
+	  HAL_I2C_Slave_Receive_IT(&hi2c1, i2c_buff, STD_BUFFER_SIZE);
+  }
+
+  printf("\rTELEMETRIA NUCLEO V1.1 (2025)\n\r");
 
   while (1)
   {
-	/* Recebe pacote de dados da Datalogger via I2C1 */
-	_i2c1_receive(txBuf, 8);
 
-	/* Envia os dados lidos via LoRa para a placa receptora */
-	txDone = txTimeout = false;
-	SUBGRF_SetSwitch(RFO_LP, RFSWITCH_TX);
-	SUBGRF_SendPayload(txBuf, sizeof(txBuf), 0);
-	while (!txDone && !txTimeout);
+    if (enable_lora_tx) {
 
-	/* Verifica flags e define status da transmissao LoRa */
-	if (txTimeout) {
-		status = "TIMEOUT";
-	} else if (txDone) {
-		status = "OK";
-	} else {
-		status = "DESCONHECIDO";
-	}
-	printf("\r\n\r\nStatus: %s", status);
+    	if(i2c_enabled) {
+    		memcpy(lora_buff, i2c_buff, STD_BUFFER_SIZE);
+    	}
 
-	/* Se o processo foi concluido com sucesso, imprime os dados recebidos
-	 * e pisca o LED verde; Senao, pisca o LED vermelho */
-	if (txDone) {
-	  printf("\r\nPayload (%d bytes): ", (int)sizeof(txBuf));
-	  for (int i = 0; i < sizeof(txBuf); i++) {
-	    printf("%02X ", txBuf[i]);
-	  }
-	  BSP_LED_Off(LED_RED);
-	  BSP_LED_Toggle(LED_GREEN);
-	} else {
-	  BSP_LED_Off(LED_RED);
-	  BSP_LED_Toggle(LED_GREEN);
-	}
+    	if(rng_mode) {
+    		lora_buff[0] = 0x01;
+    		for(uint8_t i = 1; i < STD_BUFFER_SIZE; i++){
+    			lora_buff[i] = random() % 0xFF;
+    		}
+    	}
 
-	/* Pausa */
-	HAL_Delay(POLL_DELAY_MS);
+	    tx_done = false;
+	    tx_timeout = false;
+
+	    SUBGRF_SetSwitch(RFO_LP, RFSWITCH_TX);
+	    SUBGRF_SendPayload(lora_buff, sizeof(lora_buff), 0);
+
+	    while (!tx_done && !tx_timeout) {
+	    }
+
+	    if (tx_done) {
+
+
+		  printf("\r\nlora_buff: ");
+		  for (int i = 0; i < sizeof(lora_buff); i++) {
+			  printf("%02X ", lora_buff[i]);
+		  }
+
+
+		  BSP_LED_Off(LED_RED);
+		  BSP_LED_Toggle(LED_GREEN);
+
+	    } else if (tx_timeout) {
+		  BSP_LED_Toggle(LED_RED);
+	    }
+    } else if (enable_lora_rx) {
+
+    	rx_done = rx_timeout = rx_error = false;
+        SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
+    	SUBGRF_SetRx(3000 << 6);
+    	while (!rx_done && !rx_timeout && !rx_error);
+
+    	if (rx_done)
+		{
+    	  uint8_t rx_size;
+		  SUBGRF_GetPayload(lora_buff, &rx_size, 0xFF);
+		  printf("\r\nlora_buff: ");
+		  for (int i = 0; i < sizeof(lora_buff); i++) {
+			  printf("%02X ", lora_buff[i]);
+		  }
+		  BSP_LED_Off(LED_RED);
+		  BSP_LED_Toggle(LED_GREEN);
+		} else {
+		  BSP_LED_Off(LED_GREEN);
+		  BSP_LED_Toggle(LED_RED);
+		}
+    }
+
+    HAL_Delay(SLEEP_TIME);
 
     /* USER CODE END WHILE */
 
@@ -237,14 +251,14 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_11;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -262,7 +276,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.AHBCLK3Divider = RCC_SYSCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }
@@ -288,22 +302,6 @@ int __io_putchar(int ch) {
 int _write(int file, char *ptr, int len) {
     HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
     return len;
-}
-
-/* @brief Recebe e armazena dados atraves do I2C1
- * @param buf Buffer onde os dados sao armazenados
- * @param size Tamanho do buffer
- * @retval Nenhum
- */
-void _i2c1_receive(uint8_t* buf, uint8_t size){
-  HAL_StatusTypeDef status = HAL_I2C_Slave_Receive(&hi2c1, buf, size, RX_TIMEOUT_MS);
-  if (status != HAL_OK)
-  {
-    if (__HAL_I2C_GET_FLAG(&hi2c1, I2C_FLAG_AF))
-	  __HAL_I2C_CLEAR_FLAG(&hi2c1, I2C_FLAG_AF);
-	__HAL_I2C_DISABLE(&hi2c1);
-	__HAL_I2C_ENABLE(&hi2c1);
-  }
 }
 
 /**
@@ -338,7 +336,7 @@ void radioInit(void)
       .CrcMode        = LORA_CRC_ON,
       .HeaderType     = LORA_PACKET_VARIABLE_LENGTH,
       .InvertIQ       = LORA_IQ_NORMAL,
-      .PayloadLength  = 0xFF,          // valor “max” genérico
+      .PayloadLength  = STD_BUFFER_SIZE,
       .PreambleLength = LORA_PREAMBLE_LENGTH
     }
   };
@@ -352,48 +350,10 @@ void radioInit(void)
   */
 void RadioOnDioIrq(RadioIrqMasks_t irq)
 {
-  if(irq == IRQ_TX_DONE)        txDone    = true;
-  else if(irq == IRQ_RX_TX_TIMEOUT) txTimeout = true;
-}
-
-void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-  if (hspi == &hspi1)
-  {
-    char uartBuff[64];
-    uint16_t len;
-
-    len = sprintf(uartBuff, "RxCplt: OK\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)uartBuff, len, HAL_MAX_DELAY);
-
-    len = sprintf(uartBuff, "Received: ");
-    HAL_UART_Transmit(&huart2, (uint8_t*)uartBuff, len, HAL_MAX_DELAY);
-
-    for (int i = 0; i < 8; i++)
-    {
-      len = sprintf(uartBuff, "%u ", rxData[i]);
-      HAL_UART_Transmit(&huart2, (uint8_t*)uartBuff, len, HAL_MAX_DELAY);
-    }
-
-    len = sprintf(uartBuff, "\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)uartBuff, len, HAL_MAX_DELAY);
-
-    HAL_SPI_Receive_IT(&hspi1, rxData, 8);
-  }
-}
-
-void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
-{
-  if (hspi == &hspi1)
-  {
-    char uartBuff[64];
-    uint16_t len;
-
-    len = sprintf(uartBuff, "SPI Error\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)uartBuff, len, HAL_MAX_DELAY);
-
-    HAL_SPI_Receive_IT(&hspi1, rxData, 8);
-  }
+  if(irq == IRQ_TX_DONE)        tx_done    = true;
+  else if(irq == IRQ_RX_TX_TIMEOUT) { tx_timeout = true; rx_timeout = true; }
+  else if (irq == IRQ_RX_DONE) rx_done = true;
+  else if (irq == IRQ_CRC_ERROR) rx_error = true;
 }
 
 /* USER CODE END 4 */
@@ -412,8 +372,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.

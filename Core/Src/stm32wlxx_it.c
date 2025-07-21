@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern SPI_HandleTypeDef hspi1;
+extern I2C_HandleTypeDef hi2c1;
 extern SUBGHZ_HandleTypeDef hsubghz;
 /* USER CODE BEGIN EV */
 
@@ -200,17 +200,31 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles SPI1 Interrupt.
+  * @brief This function handles I2C1 Event Interrupt.
   */
-void SPI1_IRQHandler(void)
+void I2C1_EV_IRQHandler(void)
 {
-  /* USER CODE BEGIN SPI1_IRQn 0 */
+  /* USER CODE BEGIN I2C1_EV_IRQn 0 */
 
-  /* USER CODE END SPI1_IRQn 0 */
-  HAL_SPI_IRQHandler(&hspi1);
-  /* USER CODE BEGIN SPI1_IRQn 1 */
+  /* USER CODE END I2C1_EV_IRQn 0 */
+  HAL_I2C_EV_IRQHandler(&hi2c1);
+  /* USER CODE BEGIN I2C1_EV_IRQn 1 */
 
-  /* USER CODE END SPI1_IRQn 1 */
+  /* USER CODE END I2C1_EV_IRQn 1 */
+}
+
+/**
+  * @brief This function handles I2C1 Error Interrupt.
+  */
+void I2C1_ER_IRQHandler(void)
+{
+  /* USER CODE BEGIN I2C1_ER_IRQn 0 */
+
+  /* USER CODE END I2C1_ER_IRQn 0 */
+  HAL_I2C_ER_IRQHandler(&hi2c1);
+  /* USER CODE BEGIN I2C1_ER_IRQn 1 */
+
+  /* USER CODE END I2C1_ER_IRQn 1 */
 }
 
 /**
